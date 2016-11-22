@@ -9,6 +9,7 @@
     "juice": "^4.0.0",
     "moment": "^2.16.0",
     "nodemailer": "^2.6.4",
+    "numeral": "^1.5.5",
     "request-promise": "^4.1.1"
   },
   "devDependencies": {},
@@ -16,5 +17,9 @@
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Matthieu Fauveau <mfauveau@gmail.com>",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mfauveau/sparkpost-deliverability-report.git"
+  }
 }
