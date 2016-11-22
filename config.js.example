@@ -1,0 +1,31 @@
+var config = {};
+
+config.api = {
+  'url': 'https://api.sparkpost.com/api/v1',
+  'key': ''
+};
+
+config.domains = 'gmail.com,yahoo.com,hotmail.com,hotmail.fr,aol.com,libero.it,orange.fr,icloud.com,yahoo.co.jp,web.de';
+
+config.smtp = {
+  'user': '',
+  'pwd': '',
+  'server': '',
+  'port': '587',
+  'extra': {
+    'requireTLS': true,
+    'secureConnection': false,
+    'tls': {
+      'ciphers':'SSLv3',
+      'rejectUnauthorized': false,
+    }
+  }
+};
+
+config.mail = {
+  'subject': 'Deliverability Report',
+  'from': '"John Doe" <john@doe.com>',
+  'to': 'jane@doe.com'
+};
+
+module.exports = config;

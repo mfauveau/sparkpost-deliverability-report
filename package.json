@@ -1,0 +1,20 @@
+{
+  "name": "sparkpost-deliverability-report",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "dependencies": {
+    "bluebird": "^3.4.6",
+    "commander": "^2.9.0",
+    "juice": "^4.0.0",
+    "moment": "^2.16.0",
+    "nodemailer": "^2.6.4",
+    "request-promise": "^4.1.1"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Matthieu Fauveau <mfauveau@gmail.com>",
+  "license": "MIT"
+}

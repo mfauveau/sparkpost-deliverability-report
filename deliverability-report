@@ -1,0 +1,249 @@
+#!/usr/bin/env node
+
+var program = require('commander');
+program.version('1.0.0')
+  .option('-d, --daily', 'Get the report for the past day')
+  .option('-w, --weekly', 'Get the report for the past week')
+  .parse(process.argv);
+
+var config = require('./config');
+
+var Promise = require('bluebird'),
+    rp = require('request-promise'),
+    moment = require('moment'),
+    numeral = require('numeral'),
+    juice = require('juice');
+
+var nodemailer = require('nodemailer'),
+    transporter = nodemailer.createTransport(Object.assign(
+      {
+        'host': config.smtp.server,
+        'port': config.smtp.port,
+        'auth': {
+          'user': config.smtp.user,
+          'pass': config.smtp.pwd
+        }
+      },
+      config.smtp.extra
+    ));
+
+if (!program.daily && !program.weekly) {
+  console.error('No command given!');
+  process.exit(1);
+}
+
+if (program.daily) {
+  var day = moment().add(-1, 'days');
+  var from = day.format('YYYY-MM-DD') + 'T00:00';
+  var to = day.format('YYYY-MM-DD') + 'T23:59';
+  var period = day.format('MMMM Do YYYY');
+  config.mail.subject = "Daily " + config.mail.subject;
+} else if (program.weekly) {
+  var start = moment().add(-8, 'days');
+  var end = moment().add(-1, 'days');
+  var from = start.format('YYYY-MM-DD') + 'T00:00';
+  var to = end.format('YYYY-MM-DD') + 'T23:59';
+  var period = start.format('MMMM Do YYYY') + ' to ' + end.format('MMMM Do YYYY');
+  config.mail.subject = "Weekly " + config.mail.subject;
+}
+
+var createTable = function(data) {
+  var html = '',
+      col = [];
+
+  for (var i = 0; i < data.length; i++) {
+      for (var key in data[i]) {
+          if (col.indexOf(key) === -1) {
+              col.push(key);
+          }
+      }
+  }
+
+  html = '<table>' +
+    '<tr>';
+  for (var i = 0; i < col.length; i++) {
+    html += '<th>' + col[i] + '</th>';
+  }
+  html += '</tr>';
+  for (var i = 0; i < data.length; i++) {
+    html += '<tr>';
+    for (var j = 0; j < col.length; j++) {
+      html += '<td style="' + getStyleForPercentage(data[i][col[j]], col[j]) + '">' + data[i][col[j]] + '</td>'
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+
+  return html;
+}
+
+var rate = function(dividend, divisor) {
+  return (dividend && divisor) ? numeral(dividend/divisor).format('0.00%') : numeral(0).format('0.00%');
+}
+
+var getStyleForPercentage = function(val, col) {
+  if (val.indexOf('%') === -1) return '';
+
+  val = val.replace('%','');
+  val = parseFloat(val);
+
+  if (val == 'NaN') return '';
+
+  if (col == 'Hard Rate' || col == 'Soft Rate' || col == 'Block Rate') {
+    var val = 120-(val*50);
+    val = val < 0 ? 0 : val;
+    return 'background-color: hsl('+val+',100%,60%);';
+  } else if (col == 'Complaint Rate') {
+    var val = 120-(val*300);
+    val = val < 0 ? 0 : val;
+    return 'background-color: hsl('+val+',100%,60%);';
+  } else if (col == 'Open Rate' || col == 'Click Rate' || col == 'Open to Click Rate') {
+    return 'background-color: #fff; background-image: linear-gradient(to right, #47eb47, #47eb47); background-repeat: no-repeat; background-size: '+ val +'% 100%;';
+  } else {
+    return 'background-color: hsl('+((val/100)*120)+',100%,60%);';
+  }
+}
+
+var parseRow = function(row) {
+
+  return {
+    'Sent': numeral(row.count_sent).format('0,0'),
+    'Delivered': numeral(row.count_delivered).format('0,0'),
+    'Delivery Rate': rate(row.count_delivered,row.count_sent),
+    'Hard Rate': rate(row.count_hard_bounce,row.count_sent),
+    'Soft Rate': rate(row.count_soft_bounce,row.count_sent),
+    'Block Rate': rate(row.count_block_bounce,row.count_sent),
+    'Open Rate': rate(row.count_unique_confirmed_opened,row.count_delivered),
+    'Click Rate': rate(row.count_unique_clicked,row.count_delivered),
+    'Open to Click Rate': rate(row.count_unique_clicked,row.count_unique_confirmed_opened),
+    'Complaint Rate': rate(row.count_spam_complaint,row.count_delivered)
+  };
+}
+
+var aggregate = function(results, group) {
+  var total_sent = 0, total_delivered = 0, total_hard_bounce = 0, total_soft_bounce = 0, total_block_bounce = 0, total_unique_confirmed_opened = 0, total_unique_clicked = 0, total_spam_complaint = 0;
+  var aggregated = [];
+
+  for (var k in results) {
+    var row = results[k];
+    var item = {};
+
+    if (group == 'campaigns') {
+      item = {
+        'Campaign': row.campaign_id
+      };
+
+      if (row.campaign_id.indexOf('msys') !== -1 || row.campaign_id.indexOf('smoke_test') !== -1) {
+        continue;
+      }
+    } else if (group == 'domains') {
+      item = {
+        'Domain': row.domain
+      };
+    }
+
+    if (row.count_sent == 0) {
+      continue;
+    }
+
+    aggregated.push(Object.assign(item, parseRow(row)));
+
+    total_sent += row.count_sent;
+    total_delivered += row.count_delivered;
+    total_hard_bounce += row.count_hard_bounce;
+    total_soft_bounce += row.count_soft_bounce;
+    total_block_bounce += row.count_block_bounce;
+    total_unique_confirmed_opened += row.count_unique_confirmed_opened;
+    total_unique_clicked += row.count_unique_clicked;
+    total_spam_complaint += row.count_spam_complaint;
+  }
+
+  if (group == 'campaigns') {
+    item = {
+      'Campaign': 'All campaigns'
+    };
+  } else if (group == 'domains') {
+    item = {
+      'Domain': 'All domains'
+    };
+  }
+
+  aggregated.unshift(Object.assign(item, parseRow({
+    'count_sent': total_sent,
+    'count_delivered': total_delivered,
+    'count_hard_bounce': total_hard_bounce,
+    'count_soft_bounce': total_soft_bounce,
+    'count_block_bounce': total_block_bounce,
+    'count_unique_confirmed_opened': total_unique_confirmed_opened,
+    'count_unique_clicked': total_unique_clicked,
+    'count_spam_complaint': total_spam_complaint
+  })));
+
+  return aggregated;
+}
+
+var sparkPost = rp.defaults({
+  baseUrl: config.api.url,
+  headers: {
+    'Authorization': config.api.key
+  },
+  json: true
+});
+
+var deliverabilityReq = sparkPost.get({
+  url: 'metrics/deliverability',
+  qs: {
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    from: from,
+    to: to
+  }
+}).promise();
+
+var domainsReq = sparkPost.get({
+  url: 'metrics/deliverability/domain',
+  qs: {
+    domains: config.domains,
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    from: from,
+    to: to
+  }
+}).promise();
+
+var campaignsReq = sparkPost.get({
+  url: 'metrics/deliverability/campaign',
+  qs: {
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    from: from,
+    to: to
+  }
+}).promise();
+
+Promise.all([deliverabilityReq,domainsReq,campaignsReq]).then(function(values) {
+  var deliverability = values[0].results[0],
+    domains = values[1].results,
+    campaigns = values[2].results;
+
+  deliverability = [parseRow(deliverability)];
+  domains = aggregate(domains, 'domains');
+  campaigns = aggregate(campaigns, 'campaigns');
+
+  var html = '<style type="text/css">' +
+    'table { color: #333; font-family: Helvetica, Arial, sans-serif; border-collapse:collapse; border-spacing: 0; width: 1020px; }' +
+    'td, th { border: 1px solid #CCC; height: 30px; }' +
+    'th { background: #F3F3F3; font-weight: bold; width: 90px; }' +
+    'th:first-child { width: 120px; }' +
+    'td { background: #FAFAFA; text-align: center; }' +
+    '</style>' +
+    '<p>Deliverability for ' + period + ':</p>' + createTable(deliverability) +
+    '<p>Overall stats by domain:</p>' + createTable(domains) +
+    '<p>Stats by mail stream:</p>' + createTable(campaigns);
+
+  transporter.sendMail(Object.assign(config.mail, {'html': juice(html)}), function(error, info) {
+    if (error){
+        return console.error(error);
+    }
+    console.log('Message sent: ' + info.response);
+  });
+}).catch(function(error) {
+  console.error(error);
+});
