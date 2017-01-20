@@ -39,7 +39,7 @@ if (program.daily) {
   var period = day.format('MMMM Do YYYY');
   config.mail.subject = "Daily " + config.mail.subject;
 } else if (program.weekly) {
-  var start = moment().add(-8, 'days');
+  var start = moment().add(-7, 'days');
   var end = moment().add(-1, 'days');
   var from = start.format('YYYY-MM-DD') + 'T00:00';
   var to = end.format('YYYY-MM-DD') + 'T23:59';
@@ -140,11 +140,21 @@ var aggregate = function(results, group) {
       item = {
         'Domain': row.domain
       };
+    } else if (group == 'bindinggroups') {
+      item = {
+        'Binding Group': row.binding_group
+      }
+
+      if (row.binding_group == 'administrative' || row.binding_group == 'default') {
+        continue;
+      }
     }
 
     if (row.count_sent == 0) {
       continue;
     }
+
+    row.count_sent = row.count_sent-row.count_admin_bounce;
 
     aggregated.push(Object.assign(item, parseRow(row)));
 
@@ -166,6 +176,10 @@ var aggregate = function(results, group) {
     item = {
       'Domain': 'All domains'
     };
+  } else if (group == 'bindinggroups') {
+    item = {
+      'Binding Group': 'All binding groups'
+    };
   }
 
   aggregated.unshift(Object.assign(item, parseRow({
@@ -178,6 +192,14 @@ var aggregate = function(results, group) {
     'count_unique_clicked': total_unique_clicked,
     'count_spam_complaint': total_spam_complaint
   })));
+
+  if (group == 'bindinggroups') {
+    for (var key in aggregated) {
+      delete aggregated[key]['Open Rate'];
+      delete aggregated[key]['Click Rate'];
+      delete aggregated[key]['Open to Click Rate'];
+    }
+  }
 
   return aggregated;
 }
@@ -193,7 +215,7 @@ var sparkPost = rp.defaults({
 var deliverabilityReq = sparkPost.get({
   url: 'metrics/deliverability',
   qs: {
-    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
     from: from,
     to: to
   }
@@ -203,7 +225,16 @@ var domainsReq = sparkPost.get({
   url: 'metrics/deliverability/domain',
   qs: {
     domains: config.domains,
-    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    from: from,
+    to: to
+  }
+}).promise();
+
+var bindingGroupsReq = sparkPost.get({
+  url: 'metrics/deliverability/binding-group',
+  qs: {
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
     from: from,
     to: to
   }
@@ -212,19 +243,22 @@ var domainsReq = sparkPost.get({
 var campaignsReq = sparkPost.get({
   url: 'metrics/deliverability/campaign',
   qs: {
-    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
     from: from,
     to: to
   }
 }).promise();
 
-Promise.all([deliverabilityReq,domainsReq,campaignsReq]).then(function(values) {
+Promise.all([deliverabilityReq,domainsReq,bindingGroupsReq,campaignsReq]).then(function(values) {
   var deliverability = values[0].results[0],
     domains = values[1].results,
-    campaigns = values[2].results;
+    bindingGroups = values[2].results,
+    campaigns = values[3].results;
 
+  deliverability.count_sent = deliverability.count_sent-deliverability.count_admin_bounce;
   deliverability = [parseRow(deliverability)];
   domains = aggregate(domains, 'domains');
+  bindingGroups = aggregate(bindingGroups, 'bindinggroups');
   campaigns = aggregate(campaigns, 'campaigns');
 
   var html = '<style type="text/css">' +
@@ -236,6 +270,7 @@ Promise.all([deliverabilityReq,domainsReq,campaignsReq]).then(function(values) {
     '</style>' +
     '<p>Deliverability for ' + period + ':</p>' + createTable(deliverability) +
     '<p>Overall stats by domain:</p>' + createTable(domains) +
+    '<p>Stats by binding groups:</p>' + createTable(bindingGroups) +
     '<p>Stats by mail stream:</p>' + createTable(campaigns);
 
   transporter.sendMail(Object.assign(config.mail, {'html': juice(html)}), function(error, info) {
