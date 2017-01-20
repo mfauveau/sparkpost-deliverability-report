@@ -43,7 +43,7 @@ if (program.daily) {
   var end = moment().add(-1, 'days');
   var from = start.format('YYYY-MM-DD') + 'T00:00';
   var to = end.format('YYYY-MM-DD') + 'T23:59';
-  var period = start.format('MMMM Do YYYY') + ' to ' + end.format('MMMM Do YYYY');
+  var period = start.format('MMMM Do YYYY') + ' to ' + end.add(1, 'days').format('MMMM Do YYYY');
   config.mail.subject = "Weekly " + config.mail.subject;
 }
 
