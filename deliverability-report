@@ -82,7 +82,7 @@ var rate = function(dividend, divisor) {
 }
 
 var getStyleForPercentage = function(val, col) {
-  if (val.indexOf('%') === -1) return '';
+  if (val === undefined || val.indexOf('%') === -1) return '';
 
   val = val.replace('%','');
   val = parseFloat(val);
@@ -140,9 +140,13 @@ var aggregate = function(results, group) {
       item = {
         'Domain': row.domain
       };
+    } else if (group == 'subaccounts') {
+      item = {
+        'Subaccount': row.subaccount_name
+      };
     } else if (group == 'bindinggroups') {
       item = {
-        'Binding Group': row.binding_group
+        'IP pool': row.binding_group
       }
 
       if (row.binding_group == 'administrative' || row.binding_group == 'default') {
@@ -176,9 +180,13 @@ var aggregate = function(results, group) {
     item = {
       'Domain': 'All domains'
     };
+} else if (group == 'subaccounts') {
+    item = {
+      'Subaccount': 'All subaccounts'
+    };
   } else if (group == 'bindinggroups') {
     item = {
-      'Binding Group': 'All binding groups'
+      'IP pool': 'All IP pools'
     };
   }
 
@@ -240,8 +248,12 @@ var bindingGroupsReq = sparkPost.get({
   }
 }).promise();
 
-var campaignsReq = sparkPost.get({
-  url: 'metrics/deliverability/campaign',
+var subaccountsListReq = sparkPost.get({
+  url: 'subaccounts'
+}).promise();
+
+var subaccountsReq = sparkPost.get({
+  url: 'metrics/deliverability/subaccount',
   qs: {
     metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
     from: from,
@@ -249,17 +261,43 @@ var campaignsReq = sparkPost.get({
   }
 }).promise();
 
-Promise.all([deliverabilityReq,domainsReq,bindingGroupsReq,campaignsReq]).then(function(values) {
+var campaignsReq = sparkPost.get({
+  url: 'metrics/deliverability/campaign',
+  qs: {
+    metrics: 'count_sent,count_delivered,count_hard_bounce,count_soft_bounce,count_block_bounce,count_admin_bounce,count_rendered,count_unique_confirmed_opened,count_clicked,count_unique_clicked,count_spam_complaint',
+    from: from,
+    to: to,
+    order_by: 'count_injected',
+    limit: 10,
+  }
+}).promise();
+
+Promise.all([deliverabilityReq,domainsReq,bindingGroupsReq,subaccountsListReq,subaccountsReq/*,campaignsReq*/]).then(function(values) {
   var deliverability = values[0].results[0],
     domains = values[1].results,
     bindingGroups = values[2].results,
-    campaigns = values[3].results;
+    subaccountsList = values[3].results,
+    subaccounts = values[4].results,
+    // campaigns = values[5].results,
+    subaccountNames = [];
+
+  for (var key in subaccountsList) {
+    subaccount = subaccountsList[key];
+    subaccountNames[subaccount.id] = subaccount.name;
+  }
+
+  delete subaccounts[0]; // remove master account
+
+  for (var key in subaccounts) {
+    subaccounts[key].subaccount_name = subaccountNames[subaccounts[key].subaccount_id];
+  }
 
   deliverability.count_sent = deliverability.count_sent-deliverability.count_admin_bounce;
   deliverability = [parseRow(deliverability)];
   domains = aggregate(domains, 'domains');
   bindingGroups = aggregate(bindingGroups, 'bindinggroups');
-  campaigns = aggregate(campaigns, 'campaigns');
+  subaccounts = aggregate(subaccounts, 'subaccounts');
+  // campaigns = aggregate(campaigns, 'campaigns');
 
   var html = '<style type="text/css">' +
     'table { color: #333; font-family: Helvetica, Arial, sans-serif; border-collapse:collapse; border-spacing: 0; width: 1020px; }' +
@@ -270,8 +308,9 @@ Promise.all([deliverabilityReq,domainsReq,bindingGroupsReq,campaignsReq]).then(f
     '</style>' +
     '<p>Deliverability for ' + period + ':</p>' + createTable(deliverability) +
     '<p>Overall stats by domain:</p>' + createTable(domains) +
-    '<p>Stats by binding groups:</p>' + createTable(bindingGroups) +
-    '<p>Stats by mail stream:</p>' + createTable(campaigns);
+    '<p>Stats by IP pool:</p>' + createTable(bindingGroups) +
+    '<p>Stats by subaccount:</p>' + createTable(subaccounts)
+    ;/*'<p>Stats by mail stream:</p>' + createTable(campaigns);*/
 
   transporter.sendMail(Object.assign(config.mail, {'html': juice(html)}), function(error, info) {
     if (error){
