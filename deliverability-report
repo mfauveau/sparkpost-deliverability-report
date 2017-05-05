@@ -286,11 +286,11 @@ Promise.all([deliverabilityReq,domainsReq,bindingGroupsReq,subaccountsListReq,su
     subaccountNames[subaccount.id] = subaccount.name;
   }
 
-  delete subaccounts[0]; // remove master account
-
   for (var key in subaccounts) {
     subaccounts[key].subaccount_name = subaccountNames[subaccounts[key].subaccount_id];
   }
+
+  subaccounts.pop();
 
   deliverability.count_sent = deliverability.count_sent-deliverability.count_admin_bounce;
   deliverability = [parseRow(deliverability)];
